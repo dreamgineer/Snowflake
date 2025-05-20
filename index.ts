@@ -36,7 +36,7 @@ class Snowflake extends EventEmitter {
         .then((e) => e.json())
         .then((e: any) => ((this.s.ws = e.url), this.connect()));
     else this.connect();
-    const cache = Bun.file(__dirname + "specification.json");
+    const cache = Bun.file(import.meta.dir + "/specification.json");
     this.st.sp = cache.exists().then((exist) =>
       exist
         ? cache.json()
@@ -134,11 +134,11 @@ class Snowflake extends EventEmitter {
     if (this.ws) this.ws.close();
   }
   
-  proxy(path: string[] = [], base: string, token: string) {
+  private proxy(path: string[] = [], base: string, token: string) {
     const proxy = this.proxy;
     return new Proxy(
       async (payload: Record<string, any>, p: string[] = path) => {
-        const { method, pathname } = this.parseEndpoint(p, await this.st.sp as Specification);
+        const { m: method, p: pathname } = this.parse(p, await this.st.sp as Specification);
         const url = `${base}/${pathname}`;
         const res = await fetch(url, {
           method,
@@ -167,7 +167,7 @@ class Snowflake extends EventEmitter {
     );
   }
   
-  parseEndpoint(
+  private parse(
     path: string[],
     specRoot: Specification,
     options: Record<string, any> = {}
@@ -220,9 +220,8 @@ class Snowflake extends EventEmitter {
     }
   
     return {
-      method,
-      pathname: finalPathname,
-      spec: methodSpec,
+      m: method,
+      p: finalPathname
     };
   }
 }
