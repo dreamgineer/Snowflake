@@ -1,12 +1,12 @@
 import { EventEmitter } from "events";
 
-const GatewayIntents = Object.fromEntries(
+const GatewayIntents: Intents = Object.fromEntries(
   "#S,#_MEMBERS,#_BANS,#_EMOJIS_AND_STICKERS,#_INTEGRATIONS,#_WEBHOOKS,#_INVITES,#_VOICE_STATES,#_PRESENCES,#_$S,#_$_REACTIONS,#_$_TYPING,DIRECT_$S,DIRECT_$_REACTIONS,DIRECT_$_TYPING,$_CONTENT,#_SCHEDULED_EVENTS,AUTO_MODERATION_CONFIGURATION,AUTO_MODERATION_EXECUTION"
     .replace(/#/g, "GUILD")
     .replace(/\$/g, "MESSAGE")
     .split(",")
     .map((e, i) => [e, 1 << i])
-);
+) as Intents;
 const stringify = JSON.stringify;
 
 const methods = {
@@ -25,7 +25,7 @@ class Snowflake extends EventEmitter {
   private s: ClientSettings;
   private se: ClientSession = {};
   private st: ClientStore = {};
-  readonly rest;
+  readonly rest: RestCall;
   constructor(settings: ClientSettings) {
     super();
     settings.api ??= "https://discord.com/api/";
@@ -80,7 +80,7 @@ class Snowflake extends EventEmitter {
     );
   }
 
-  async connect() {
+  async connect(): Promise<void> {
     if (this.ws && this.ws.readyState < 2) return;
     if (this.se.hbt) clearTimeout(this.se.hbt);
     const ws = (this.ws = new WebSocket(
@@ -169,11 +169,11 @@ class Snowflake extends EventEmitter {
     return this.ws?.send?.(stringify(data));
   }
 
-  get ping() {
-    return this.se.ping;
+  get ping(): number {
+    return this.se.ping || 0;
   }
 
-  destroy() {
+  destroy(): void {
     if (this.se.hbt) clearTimeout(this.se.hbt);
     if (this.ws) this.ws.close();
   }
@@ -220,7 +220,7 @@ class Snowflake extends EventEmitter {
     path: string[],
     spec: Specification,
     options: Record<string, any> = {}
-  ) {
+  ): { m: string; p: string } | undefined {
     try {
       const parts = [...path];
       const method = methods[`${parts.at(-1)}` as keyof typeof methods];
@@ -315,7 +315,7 @@ interface ClientSession {
 }
 
 interface ClientStore {
-  sp?: Promise<Specification>; // Specification
+  sp?: Promise<typeof import("./specification.json") & Specification>; // Specification
 }
 
 interface Session {
@@ -361,5 +361,7 @@ function toCamelCase(str: string) {
     })
     .join("");
 }
+
+type Intents = Record<string, number>;
 
 export { Snowflake, Snowflake as default, GatewayIntents };
