@@ -106,8 +106,11 @@ const finalTypes = types
     "export { Snowflake, Snowflake as default, GatewayIntents };",
     `declare module "@sfjs/snowflake" {
   export { Snowflake, Snowflake as default, GatewayIntents };
-  export type Specification = ${generateApiType(spec, 1)};
 }`
+  )
+  .replace(
+    "readonly rest: RestCall;",
+    `readonly rest: RestCall;${generateApiType(spec).slice(1, -1)}`
   );
 await Bun.write("dist/ts/index.d.ts", finalTypes, { createPath: true });
 await Bun.write(
