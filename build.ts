@@ -122,10 +122,12 @@ await Bun.write(
     types: "index.d.ts",
   })
 );
-if (!process.argv.includes("--dry")) {
-  console.log("Publishing package...");
-  await Bun.$`bun publish --cwd=dist/js --access public`;
-  console.log("Publishing types...");
-  await Bun.$`bun publish --cwd=dist/ts --access public`;
-}
+console.log("Publishing package...");
+await Bun.$`bun publish --cwd=dist/js --access public ${
+  process.argv.includes("--dry") ? "--dry-run" : ""
+}`;
+console.log("Publishing types...");
+await Bun.$`bun publish --cwd=dist/ts --access public ${
+  process.argv.includes("--dry") ? "--dry-run" : ""
+}`;
 console.log("Done!");
