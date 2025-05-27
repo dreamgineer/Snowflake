@@ -66,7 +66,7 @@ class Snowflake extends EventEmitter {
                   stack = stack[part];
                 }
               }
-              return spec;
+              return sortSpecification(spec);
             })
             .then(
               (e: any) => (cache.write(JSON.stringify(e)).catch(() => {}), e)
@@ -80,7 +80,7 @@ class Snowflake extends EventEmitter {
     );
   }
 
-  async connect(): Promise<void> {
+  private async connect(): Promise<void> {
     if (this.ws && this.ws.readyState < 2) return;
     if (this.se.hbt) clearTimeout(this.se.hbt);
     const ws = (this.ws = new WebSocket(
@@ -169,10 +169,16 @@ class Snowflake extends EventEmitter {
     return this.ws?.send?.(stringify(data));
   }
 
+  /**
+   *  Get the ping of the last heartbeat in millisecond
+   */
   get ping(): number {
     return this.se.ping || 0;
   }
 
+  /**
+   * Destroy the client and close the connection to the Discord Gateway.
+   */
   destroy(): void {
     if (this.se.hbt) clearTimeout(this.se.hbt);
     if (this.ws) this.ws.close();
@@ -180,8 +186,9 @@ class Snowflake extends EventEmitter {
 
   private proxy(path: string[] = []): RestCall {
     const send = async (payload: Record<string, any>, p: string[] = path) => {
-      const parsed = this.parse(p, (await this.st.sp) as Specification);
+      const parsed = this.parse(p, (await this.st.sp) as Specification, payload);
       if (!parsed) throw new Error(`Invalid path: ${p.join("/")}`);
+      console.log(parsed);
       const { m: method, p: pathname } = parsed;
       const url = `${this.s.api}/${pathname}`;
       const res = await fetch(url, {
@@ -216,83 +223,55 @@ class Snowflake extends EventEmitter {
     }) as unknown as RestCall;
   }
 
-  parse(
+  private parse(
     path: string[],
     spec: Specification,
     options: Record<string, any> = {}
   ): { m: string; p: string } | undefined {
-    try {
-      const parts = [...path];
-      const method = methods[`${parts.at(-1)}` as keyof typeof methods];
-      if (method) parts.pop();
-      // Create a path mapping to extract from spec
-      let stack = spec;
-      const parsed: string[] = [];
-      const urlParams: Record<string, string> = {};
+    // Traverse specification with pieces of path
+    // like a maze, go through all path and gradually filter them out
+    // if it reach and end, go back and use another path
+    // prioritize static path over path params
+    // path params can also be skipped. That's the last priority
+    const parts = [...path];
+    let m = methods[`${parts.at(-1)}` as keyof typeof methods];
+    if (m) parts.pop();
+    else m = "GET";
 
-      for (let i = 0; i < parts.length; i++) {
-        const part = parts[i] as string;
-
-        // Check if the part is an ID
-        if (
-          /^\d+$/.test(part) ||
-          (i > 0 && Object.keys(stack).some((k) => k.startsWith("{")))
-        ) {
-          // Find placeholder key in the spec
-          const placeholder = Object.keys(stack).find((k) => k.startsWith("{"));
-
-          if (placeholder) {
-            // Extract the param name without braces
-            const paramName = placeholder.slice(1, -1);
-            urlParams[paramName] = part;
-            parsed.push(placeholder);
-            stack = stack[placeholder] as Specification;
-            continue;
-          }
-        }
-
-        // Regular path segment
-        if (part in stack) {
-          parsed.push(part);
-          stack = stack[part] as Specification;
-        } else {
-          // Try to find it in options and remove it
-          const optionKey = `${part}_id`;
-          if (options && optionKey in options) {
-            const value = options[optionKey];
-            delete options[optionKey];
-
-            // Find the placeholder in the stack
-            const placeholder = Object.keys(stack).find((k) =>
-              k.startsWith("{")
-            );
-            if (placeholder) {
-              parsed.push(placeholder);
-              urlParams[placeholder.slice(1, -1)] = value;
-              stack = stack[placeholder] as Specification;
-            } else {
-              throw new Error(`No placeholder found for ${optionKey}`);
-            }
-          } else {
-            throw new Error(`Missing path segment: ${part}`);
-          }
-        }
-      }
-
-      // Replace placeholders in the final path
-      let finalPath = parsed.join("/");
-      for (const [param, value] of Object.entries(urlParams)) {
-        finalPath = finalPath.replace(`{${param}}`, value);
-      }
-      console.log(method, finalPath, parsed);
-      return {
-        m: method || "GET",
-        p: finalPath,
-      };
-    } catch (e) {
-      console.error(e);
-      return undefined;
+    if (!parts.length) {
+      return { m, p: "" };
     }
+
+    for (const sub of Object.keys(spec)) {
+      if (sub === "_") continue; // Skip method list
+      if (sub === parts[0]) {
+        return {
+          m,
+          p: "/" + sub + this.parse(parts.slice(1), spec[sub]!, options)?.p,
+        };
+      }
+      if (sub.startsWith("{")) {
+        const param = sub.slice(1, -1);
+        if (param in options) {
+          const option = options[param];
+          delete options[param];
+          return {
+            m,
+            p: "/" + option + this.parse(parts, spec[sub]!, options)?.p,
+          };
+        } else {
+          // If the parameter is already provided in the input path, append and skip
+          return {
+            m,
+            p:
+              "/" +
+              parts[0] +
+              this.parse(parts.slice(1), spec[sub]!, options)?.p,
+          };
+        }
+      }
+    }
+    throw new Error(`Invalid path: ${path.join("/")}`);
   }
 }
 
@@ -338,11 +317,9 @@ interface GatewayEvent {
   t: string; // Event name
 }
 
-interface Specification {
-  [path: string | number]:
-    | Specification
-    | { _: ("get" | "post" | "delete" | "create" | "patch")[] };
-}
+type Specification = {
+  [path: string | number]: Specification;
+} & { _: ("get" | "post" | "delete" | "create" | "patch")[] };
 
 interface RestCall {
   [path: string | number]: RestCall | ((args: any) => Promise<any>);
@@ -360,6 +337,42 @@ function toCamelCase(str: string) {
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
     .join("");
+}
+
+function getKey(obj: Record<string, any>, key: string[]): any {
+  if (!obj || !key.length) return obj;
+  const k = key.shift()!;
+  if (k in obj) {
+    return getKey(obj[k], key);
+  } else {
+    return undefined;
+  }
+}
+
+function sortSpecification(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(sortSpecification);
+  } else if (obj && typeof obj === "object" && obj.constructor === Object) {
+    const entries = Object.entries(obj);
+
+    entries.sort(([keyA], [keyB]) => {
+      const score = (key: string): number => {
+        if (key === "_") return 2;
+        if (key.startsWith("{")) return 1;
+        return 0;
+      };
+
+      return score(keyA) - score(keyB);
+    });
+
+    const sortedObj: any = {};
+    for (const [key, value] of entries) {
+      sortedObj[key] = sortSpecification(value);
+    }
+    return sortedObj;
+  } else {
+    return obj;
+  }
 }
 
 type Intents = Record<string, number>;
