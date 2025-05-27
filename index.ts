@@ -7,6 +7,14 @@ const GatewayIntents: Intents = Object.fromEntries(
     .split(",")
     .map((e, i) => [e, 1 << i])
 ) as Intents;
+enum ActivityType {
+  GAME = 0,
+  STREAMING = 1,
+  LISTENING = 2,
+  WATCHING = 3,
+  CUSTOM = 4,
+  COMPETING = 5,
+}
 const stringify = JSON.stringify;
 
 const methods = {
@@ -24,7 +32,9 @@ class Snowflake extends EventEmitter {
   private ws: WebSocket | undefined;
   private s: ClientSettings;
   private se: ClientSession = {};
-  private st: ClientStore = {};
+  private st: ClientStore = {
+    pr: { activities: [], status: "online", afk: false },
+  };
   readonly rest: RestCall;
   constructor(settings: ClientSettings) {
     super();
@@ -160,7 +170,7 @@ class Snowflake extends EventEmitter {
     if (!this.ws || this.ws.readyState > 1) return;
     this.se.pong = false;
     this.se.start = Date.now();
-    this.send({ op: 1, d: this.se.seq });
+    this.send({ op: 1, d: this.se.seq || null });
     setTimeout(() => this.hb(), this.se.hb);
   }
 
@@ -186,7 +196,11 @@ class Snowflake extends EventEmitter {
 
   private proxy(path: string[] = []): RestCall {
     const send = async (payload: Record<string, any>, p: string[] = path) => {
-      const parsed = this.parse(p, (await this.st.sp) as Specification, payload);
+      const parsed = this.parse(
+        p,
+        (await this.st.sp) as Specification,
+        payload
+      );
       if (!parsed) throw new Error(`Invalid path: ${p.join("/")}`);
       console.log(parsed);
       const { m: method, p: pathname } = parsed;
@@ -273,56 +287,25 @@ class Snowflake extends EventEmitter {
     }
     throw new Error(`Invalid path: ${path.join("/")}`);
   }
-}
 
-interface ClientSettings {
-  token: string; // Bot token
-  intents: number | number[]; // Intents
-  lock: string; // Specification version lock
-  api: string; // Base API URL
-  ws: string; // WebSocket URL
-}
-
-interface ClientSession {
-  hb?: number; // Heartbeat interval
-  hbt?: Timer; // Heartbeat timer
-  seq?: number; // Last sequence number
-  start?: number; // Last heartbeat time
-  pong?: boolean; // Last heartbeat pong
-  ping?: number; // Last heartbeat round-trip time
-  s?: Session; // Session
-}
-
-interface ClientStore {
-  sp?: Promise<typeof import("./specification.json") & Specification>; // Specification
-}
-
-interface Session {
-  v: number; // API Version
-  user: any; // Bot user objcet
-  guilds: any; // Array of unavailable guilds
-  session_id: string; // Used for resuming connections
-  resume_gateway_url: string; // Gateway URL for resuming connections
-  application: {
-    // Partial application object
-    id: string;
-    flag: string;
-  };
-}
-
-interface GatewayEvent {
-  op: number; // Opcode
-  d: Record<string, any>; // Data
-  s: number; // Sequence number
-  t: string; // Event name
-}
-
-type Specification = {
-  [path: string | number]: Specification;
-} & { _: ("get" | "post" | "delete" | "create" | "patch")[] };
-
-interface RestCall {
-  [path: string | number]: RestCall | ((args: any) => Promise<any>);
+  presence(presence: Presence): void {
+    if (!this.ws || this.ws.readyState > 1) return;
+    presence.since ??= Math.floor(Date.now() / 1000);
+    presence.afk ??= false;
+    this.st.pr = { ...presence, ...this.st.pr };
+    this.send({
+      op: 3,
+      d: this.st.pr,
+    });
+  }
+  activity(activities: Activity[]): void {
+    if (!this.ws || this.ws.readyState > 1) return;
+    this.st.pr.activities = activities;
+    this.send({
+      op: 3,
+      d: this.st.pr,
+    });
+  }
 }
 
 function toCamelCase(str: string) {
@@ -337,16 +320,6 @@ function toCamelCase(str: string) {
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
     .join("");
-}
-
-function getKey(obj: Record<string, any>, key: string[]): any {
-  if (!obj || !key.length) return obj;
-  const k = key.shift()!;
-  if (k in obj) {
-    return getKey(obj[k], key);
-  } else {
-    return undefined;
-  }
 }
 
 function sortSpecification(obj: any): any {
@@ -375,6 +348,70 @@ function sortSpecification(obj: any): any {
   }
 }
 
+interface ClientSettings {
+  token: string; // Bot token
+  intents: number | number[]; // Intents
+  lock: string; // Specification version lock
+  api: string; // Base API URL
+  ws: string; // WebSocket URL
+}
+
+interface ClientSession {
+  hb?: number; // Heartbeat interval
+  hbt?: Timer; // Heartbeat timer
+  seq?: number; // Last sequence number
+  start?: number; // Last heartbeat time
+  pong?: boolean; // Last heartbeat pong
+  ping?: number; // Last heartbeat round-trip time
+  s?: Session; // Session
+}
+
+interface ClientStore {
+  sp?: Promise<typeof import("./specification.json") & Specification>; // Specification
+  pr: Presence; // Presence
+}
+
+interface Session {
+  v: number; // API Version
+  user: any; // Bot user objcet
+  guilds: any; // Array of unavailable guilds
+  session_id: string; // Used for resuming connections
+  resume_gateway_url: string; // Gateway URL for resuming connections
+  application: {
+    // Partial application object
+    id: string;
+    flag: string;
+  };
+}
+
+interface GatewayEvent {
+  op: number; // Opcode
+  d: Record<string, any>; // Data
+  s: number; // Sequence number
+  t: string; // Event name
+}
+
+type Activity = {
+  name: string; // Activity name
+  type: ActivityType; // Activity type
+  url?: string; // Activity URL (optional)
+};
+
+type Presence = {
+  activities?: Activity[]; // Array of activities
+  status: "online" | "idle" | "dnd" | "invisible"; // User status
+  afk: boolean; // Whether the user is AFK
+  since?: number; // Timestamp of when the status was set
+};
+
+type Specification = {
+  [path: string | number]: Specification;
+} & { _: ("get" | "post" | "delete" | "create" | "patch")[] };
+
+interface RestCall {
+  [path: string | number]: RestCall | ((args: any) => Promise<any>);
+}
+
 type Intents = Record<string, number>;
 
-export { Snowflake, Snowflake as default, GatewayIntents };
+export { Snowflake, Snowflake as default, GatewayIntents, ActivityType };
