@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import ev from "./helper.ts";
 
 const GatewayIntents: Intents = Object.fromEntries(
   "#S,#_MEMBERS,#_BANS,#_EMOJIS_AND_STICKERS,#_INTEGRATIONS,#_WEBHOOKS,#_INVITES,#_VOICE_STATES,#_PRESENCES,#_$S,#_$_REACTIONS,#_$_TYPING,DIRECT_$S,DIRECT_$_REACTIONS,DIRECT_$_TYPING,$_CONTENT,#_SCHEDULED_EVENTS,AUTO_MODERATION_CONFIGURATION,AUTO_MODERATION_EXECUTION"
@@ -65,7 +66,7 @@ class Snowflake extends EventEmitter {
                 let stack: any = spec;
                 const parts = path.split("/").slice(1);
                 for (let i = 0; i < parts.length; i++) {
-                  const part = parts[i] as string;
+                  const part = parts[i]!;
                   stack[part] = stack[part] || {};
                   if (i === parts.length - 1) {
                     stack[part]._ = Object.keys(method as Object).filter(
@@ -100,7 +101,7 @@ class Snowflake extends EventEmitter {
     const seq = this.se.seq;
     this.se = {};
     ws.onmessage = (e) => {
-      const data = JSON.parse(e.data) as GatewayEvent;
+      const data = <GatewayEvent>JSON.parse(e.data);
       this.emit("debug", { from: "server", data });
       switch (data.op) {
         case 10:
@@ -141,7 +142,19 @@ class Snowflake extends EventEmitter {
             return (
               this.st.sp && this.st.sp.finally(() => this.emit("ready", data.d))
             );
-          return this.emit(toCamelCase(data.t), data.d);
+          const name = toCamelCase(data.t);
+          if (name in ev) {
+            return this.emit(
+              name,
+              this.proxy(
+                ev[name]!.split("/").map((p) =>
+                  p[0] == ":" ? data.d[p.slice(1)] : p
+                ),
+                data.d
+              )
+            );
+          }
+          return this.emit(name, data.d);
         case 7:
         case 9:
           // Disconnection
@@ -194,13 +207,9 @@ class Snowflake extends EventEmitter {
     if (this.ws) this.ws.close();
   }
 
-  private proxy(path: string[] = []): RestCall {
+  private proxy(path: string[] = [], ctx: Record<string, any> = {}): RestCall {
     const send = async (payload: Record<string, any>, p: string[] = path) => {
-      const parsed = this.parse(
-        p,
-        (await this.st.sp) as Specification,
-        payload
-      );
+      const parsed = parse(p, (await this.st.sp) as Specification, payload);
       if (!parsed) throw new Error(`Invalid path: ${p.join("/")}`);
       console.log(parsed);
       const { m: method, p: pathname } = parsed;
@@ -224,6 +233,7 @@ class Snowflake extends EventEmitter {
     return new Proxy(send, {
       // Use arrow function to fix this scope
       get: (_, p) => {
+        if (p in ctx) return Reflect.get(ctx, p);
         return this.proxy([...path, String(p)]);
       },
       set(t, p, v) {
@@ -235,57 +245,6 @@ class Snowflake extends EventEmitter {
         return true;
       },
     }) as unknown as RestCall;
-  }
-
-  private parse(
-    path: string[],
-    spec: Specification,
-    options: Record<string, any> = {}
-  ): { m: string; p: string } | undefined {
-    // Traverse specification with pieces of path
-    // like a maze, go through all path and gradually filter them out
-    // if it reach and end, go back and use another path
-    // prioritize static path over path params
-    // path params can also be skipped. That's the last priority
-    const parts = [...path];
-    let m = methods[`${parts.at(-1)}` as keyof typeof methods];
-    if (m) parts.pop();
-    else m = "GET";
-
-    if (!parts.length) {
-      return { m, p: "" };
-    }
-
-    for (const sub of Object.keys(spec)) {
-      if (sub === "_") continue; // Skip method list
-      if (sub === parts[0]) {
-        return {
-          m,
-          p: "/" + sub + this.parse(parts.slice(1), spec[sub]!, options)?.p,
-        };
-      }
-      if (sub.startsWith("{")) {
-        const param = sub.slice(1, -1);
-        if (param in options) {
-          const option = options[param];
-          delete options[param];
-          return {
-            m,
-            p: "/" + option + this.parse(parts, spec[sub]!, options)?.p,
-          };
-        } else {
-          // If the parameter is already provided in the input path, append and skip
-          return {
-            m,
-            p:
-              "/" +
-              parts[0] +
-              this.parse(parts.slice(1), spec[sub]!, options)?.p,
-          };
-        }
-      }
-    }
-    throw new Error(`Invalid path: ${path.join("/")}`);
   }
 
   presence(presence: Presence): void {
@@ -331,7 +290,7 @@ function sortSpecification(obj: any): any {
     entries.sort(([keyA], [keyB]) => {
       const score = (key: string): number => {
         if (key === "_") return 2;
-        if (key.startsWith("{")) return 1;
+        if (key[0] == "{") return 1;
         return 0;
       };
 
@@ -346,6 +305,54 @@ function sortSpecification(obj: any): any {
   } else {
     return obj;
   }
+}
+
+function parse(
+  path: string[],
+  spec: Specification,
+  options: Record<string, any> = {}
+): { m: string; p: string } | undefined {
+  // Traverse specification with pieces of path
+  // like a maze, go through all path and gradually filter them out
+  // if it reach and end, go back and use another path
+  // prioritize static path over path params
+  // path params can also be skipped. That's the last priority
+  const parts = [...path];
+  let m = methods[`${parts.at(-1)}` as keyof typeof methods];
+  if (m) parts.pop();
+  else m = "GET";
+
+  if (!parts.length) {
+    return { m, p: "" };
+  }
+
+  for (const sub of Object.keys(spec)) {
+    if (sub === "_") continue; // Skip method list
+    if (sub === parts[0]) {
+      return {
+        m,
+        p: "/" + sub + parse(parts.slice(1), spec[sub]!, options)?.p,
+      };
+    }
+    if (sub[0] == "{") {
+      const param = sub.slice(1, -1);
+      if (param in options) {
+        const option = options[param];
+        delete options[param];
+        return {
+          m,
+          p: "/" + option + parse(parts, spec[sub]!, options)?.p,
+        };
+      } else {
+        // If the parameter is already provided in the input path, append and skip
+        return {
+          m,
+          p: "/" + parts[0] + parse(parts.slice(1), spec[sub]!, options)?.p,
+        };
+      }
+    }
+  }
+  throw new Error(`Invalid path: ${path.join("/")}`);
 }
 
 interface ClientSettings {
