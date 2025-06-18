@@ -209,9 +209,10 @@ class Snowflake extends EventEmitter {
 
   private proxy(path: string[] = [], ctx: Record<string, any> = {}): RestCall {
     const send = async (payload: Record<string, any>, p: string[] = path) => {
+      if (typeof payload === "string") payload = { content: payload };
+      if (typeof payload !== "object") payload = {};
       const parsed = parse(p, (await this.st.sp) as Specification, payload);
       if (!parsed) throw new Error(`Invalid path: ${p.join("/")}`);
-      console.log(parsed);
       const { m: method, p: pathname } = parsed;
       const url = `${this.s.api}/${pathname}`;
       const res = await fetch(url, {
