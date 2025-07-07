@@ -1,6 +1,6 @@
 # Snowflake
 
-**Snowflake** is a lightweight, zero-dependency Discord API wrapper designed to act as a thin client between your code and the Discord API. It is the spiritual successor to [Styrocord.js](https://npmjs.com/styrocord.js), offering a modern, minimal, and efficient approach for building Discord bots.
+**Snowflake** is a lightweight, zero-dependency Discord API wrapper designed to act as a thin client between your code and the Discord API. It is the complete rewrite of [Styrocord.js](https://npmjs.com/styrocord.js), offering a modern, minimal, and efficient approach for building Discord bots.
 
 > ⚠️ **Warning:** This package is in early development and highly unstable. Do not use in production.
 
