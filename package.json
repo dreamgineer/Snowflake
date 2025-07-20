@@ -2,7 +2,7 @@
   "name": "@sfjs/snowflake",
   "module": "index.js",
   "type": "module",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Ultra lightweight Discord API wrapper for Bun",
   "devDependencies": {
     "@types/bun": "latest",
