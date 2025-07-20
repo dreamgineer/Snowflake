@@ -103,6 +103,7 @@ class Snowflake extends EventEmitter {
     ws.onmessage = (e) => {
       const data = <GatewayEvent>JSON.parse(e.data);
       this.emit("debug", { from: "server", data });
+      data.s && (this.se.seq = data.s);
       switch (data.op) {
         case 10:
           // Hello
@@ -171,7 +172,6 @@ class Snowflake extends EventEmitter {
             this.destroy();
           }
       }
-      data.s && (this.se.seq = data.s);
     };
     ws.onclose = (ev) => (
       setTimeout(() => this.connect(), 5000), this.emit("close", ev.code)
