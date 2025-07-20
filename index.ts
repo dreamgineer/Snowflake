@@ -95,7 +95,7 @@ class Snowflake extends EventEmitter {
     if (this.ws && this.ws.readyState < 2) return;
     if (this.se.hbt) clearTimeout(this.se.hbt);
     const ws = (this.ws = new WebSocket(
-      this.se.s?.resume_gateway_url || this.s.ws
+      this.se.s?.resume_gateway_url || this.s.ws!
     ));
     const sid = this.se.s?.session_id;
     const seq = this.se.seq;
@@ -359,9 +359,9 @@ function parse(
 interface ClientSettings {
   token: string; // Bot token
   intents: number | number[]; // Intents
-  lock: string; // Specification version lock
-  api: string; // Base API URL
-  ws: string; // WebSocket URL
+  lock?: string; // Specification version lock
+  api?: string; // Base API URL
+  ws?: string; // WebSocket URL
 }
 
 interface ClientSession {

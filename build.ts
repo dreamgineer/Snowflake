@@ -1,10 +1,15 @@
 import isolatedDecl from "bun-plugin-isolated-decl";
 import { GatewayIntents } from ".";
+import { createMinifier } from "dts-minify"; // dts-minify on npm
+import * as ts from "typescript";
+
+// setup (provide a TS Compiler API object)
+const minifier = createMinifier(ts);
 
 console.log("Bundling...");
 await Bun.build({
   entrypoints: ["index.ts"],
-  outdir: "dist/js",
+  outdir: "dist",
   minify: true,
   target: "bun",
   plugins: [
@@ -17,8 +22,8 @@ console.log("Copying files...");
 const pkg = await Bun.file("package.json").json();
 delete pkg.devDependencies;
 delete pkg.scripts;
-await Bun.write("dist/js/package.json", JSON.stringify(pkg));
-await Bun.write("dist/js/README.md", Bun.file("README.md"));
+await Bun.write("dist/package.json", JSON.stringify(pkg));
+await Bun.write("dist/README.md", Bun.file("README.md"));
 console.log("Fetching specification...");
 const cache = Bun.file(import.meta.dir + "/specification.json");
 const spec = await cache.exists().then((exist) =>
@@ -70,11 +75,7 @@ function generateApiType(spec: any, depth = 0): string {
         if (method in methods) m.push(methods[method as keyof typeof methods]);
       }
       for (const method of m as string[]) {
-        lines.push(
-          `${indent(
-            depth + 1
-          )}${method}: (args?: Record<string, any>) => Promise<any>;`
-        );
+        lines.push(`${indent(depth + 1)}${method}: Call;`);
       }
       continue;
     }
@@ -90,11 +91,10 @@ function generateApiType(spec: any, depth = 0): string {
     lines.push(`${indent(depth + 1)}${safeKey}: ${nestedType}`);
   }
 
-  lines.push(`${indent(depth)}}`);
+  lines.push(`${indent(depth)}}${"_" in spec ? " & ((args?: Record<string, any>) => Promise<any>);" : ";"}`);
   return lines.join("\n");
 }
-const types = await Bun.file("dist/js/index.d.ts").text();
-await Bun.file("dist/js/index.d.ts").delete();
+const types = await Bun.file("dist/index.d.ts").text();
 const finalTypes = types
   .replace(
     "type Intents = Record<string, number>;",
@@ -106,28 +106,26 @@ const finalTypes = types
     "export { Snowflake, Snowflake as default, GatewayIntents };",
     `declare module "@sfjs/snowflake" {
   export { Snowflake, Snowflake as default, GatewayIntents };
-}`
+}
+  
+type Call = (args?: Record<string, any>) => Promise<any>`
   )
   .replace(
     "readonly rest: RestCall;",
-    `readonly rest: RestCall;${generateApiType(spec).slice(1, -1)}`
-  );
-await Bun.write("dist/ts/index.d.ts", finalTypes, { createPath: true });
-await Bun.write(
-  "dist/ts/package.json",
-  JSON.stringify({
-    name: "@sfjs/types",
-    version: pkg.version,
-    description: "Types for Snowflake Discord API wrapper",
-    types: "index.d.ts",
-  })
-);
+    `readonly rest: RestCall;${generateApiType(spec).slice(1, -2)}`
+  )
+  .replace(
+    /(type .+ = {\n)([^}]+)\n *};/g,
+    (_, g1: string, g2: string) =>
+      `${g1}${g2
+        .split("\n")
+        .map((e) => (e.endsWith(";") ? e : `${e};`))
+        .join("\n")}\n};`
+  )
+  .replace(/ {2,}|;{2,}|\t|\n/g, "");
+await Bun.write("dist/index.d.ts", /* minifier.minify */ finalTypes);
 console.log("Publishing package...");
-await Bun.$`bun publish --cwd=dist/js --access public ${
-  process.argv.includes("--dry") ? "--dry-run" : ""
-}`;
-console.log("Publishing types...");
-await Bun.$`bun publish --cwd=dist/ts --access public ${
+await Bun.$`bun publish --cwd=dist --access public ${
   process.argv.includes("--dry") ? "--dry-run" : ""
 }`;
 console.log("Done!");
